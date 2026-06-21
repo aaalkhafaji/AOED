@@ -1,0 +1,54 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import odeint
+import zipfile
+from google.colab import files
+
+# --- 1. DEFINE THE MARKOV DIFFERENTIAL SYSTEM ---
+def kolmogorov_forward(P, t, lambda_1, lambda_2, lambda_3, mu):
+    # Unpack the state probability vector
+    p0, p1, p2, p3 = P
+    
+    # Define the infinitesimal generator matrix Q
+    dp0_dt = -lambda_1 * p0 + mu * p1
+    dp1_dt = lambda_1 * p0 - (lambda_2 + mu) * p1
+    dp2_dt = lambda_2 * p1 - lambda_3 * p2
+    dp3_dt = lambda_3 * p2
+    
+    return [dp0_dt, dp1_dt, dp2_dt, dp3_dt]
+
+# --- 2. SIMULATION PARAMETERS ---
+time_hours = np.linspace(0, 10000, 1000) # 10,000 hours of screen-on time
+P_initial = [1.0, 0.0, 0.0, 0.0] # 100% probability of starting in Pristine state
+
+# High-Stress "News Ticker" parameters (mu is overwhelmed by drive current)
+l1, l2, l3 = 0.002, 0.0008, 0.0003
+mu_recovery = 0.0005 
+
+# --- 3. SOLVE THE ODE SYSTEM ---
+probabilities = odeint(kolmogorov_forward, P_initial, time_hours, args=(l1, l2, l3, mu_recovery))
+p0_t, p1_t, p2_t, p3_t = probabilities.T
+
+# --- 4. PLOT AND FORMAT FIGURE 4 ---
+plt.figure(figsize=(9, 6))
+plt.plot(time_hours, p0_t, label=r'$S_0$: Pristine', color='forestgreen', linewidth=2.5)
+plt.plot(time_hours, p1_t, label=r'$S_1$: Thermal Excitation', color='orange', linewidth=2.5, linestyle='--')
+plt.plot(time_hours, p2_t, label=r'$S_2$: Structural Decay', color='crimson', linewidth=2.5)
+plt.plot(time_hours, p3_t, label=r'$S_3$: Catastrophic Failure', color='black', linewidth=3)
+
+# Formatting for academic rigor
+plt.title('Transient State Probabilities of the OLED CTMC Degradation Model', fontsize=14, pad=15)
+plt.xlabel('Cumulative Screen-On Time (Hours)', fontsize=12)
+plt.ylabel('Probability Mass $\mathbf{P}(t)$', fontsize=12)
+plt.xlim(0, 10000)
+plt.ylim(0, 1.05)
+plt.grid(True, alpha=0.3, linestyle='--')
+plt.legend(loc='center right', fontsize=11)
+plt.tight_layout()
+
+# --- 5. SAVE AND DOWNLOAD ---
+fig_filename = 'Figure_4_Markov_States.pdf'
+plt.savefig(fig_filename, format='pdf', dpi=300)
+plt.close()
+
+files.download(fig_filename)
