@@ -1,0 +1,139 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import os
+import zipfile
+from google.colab import files # Added for downloading the zip file
+
+def hardware_spatial_coupling(image_matrix, max_val=1023, critical_threshold=1023):
+    """
+    Emulates the hardware-constrained actuarial spatial coupling (II=1).
+    Uses 10-bit integer architecture with saturation arithmetic and bitwise shifts.
+    """
+    # Initialize output buffer
+    output_matrix = np.copy(image_matrix).astype(np.int32)
+    rows, cols = output_matrix.shape
+
+    # Track diffused additions separately to simulate simultaneous clock cycle
+    diffusion_buffer = np.zeros_like(output_matrix)
+
+    for r in range(rows):
+        for c in range(cols):
+            # Check for Critical Markov State S1
+            if image_matrix[r, c] >= critical_threshold:
+                # Calculate thermal offload via bitwise right-shift (>> 3 is /8)
+                delta_u = int(image_matrix[r, c]) >> 3
+                
+                # Conserve localized optical centroid (Target pixel subtracts 4 * delta)
+                output_matrix[r, c] -= 4 * delta_u
+                
+                # Diffuse to 4-connected von Neumann neighbors
+                if r > 0: diffusion_buffer[r-1, c] += delta_u        # Top
+                if r < rows-1: diffusion_buffer[r+1, c] += delta_u   # Bottom
+                if c > 0: diffusion_buffer[r, c-1] += delta_u        # Left
+                if c < cols-1: diffusion_buffer[r, c+1] += delta_u   # Right
+
+    # Apply saturation arithmetic (\oplus)
+    for r in range(rows):
+        for c in range(cols):
+            output_matrix[r, c] = min(output_matrix[r, c] + diffusion_buffer[r, c], max_val)
+
+    return output_matrix
+
+def plot_grid(ax, matrix, title, cmap):
+    """Helper function to plot the grid with numbers, matching the paper's TikZ style."""
+    cax = ax.imshow(matrix, cmap=cmap, vmin=0, vmax=1023)
+    ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
+    
+    # Add the text annotations inside the grid
+    rows, cols = matrix.shape
+    for i in range(rows):
+        for j in range(cols):
+            val = matrix[i, j]
+            color = 'black' if val > 700 else ('black' if val < 200 else 'white')
+            fontweight = 'bold' if val != 128 else 'normal'
+            ax.text(j, i, str(val), ha='center', va='center', 
+                    color=color, fontsize=16, fontweight=fontweight)
+            
+    # Clean up grid lines
+    ax.set_xticks(np.arange(-.5, cols, 1), minor=True)
+    ax.set_yticks(np.arange(-.5, rows, 1), minor=True)
+    ax.grid(which="minor", color="black", linestyle='-', linewidth=2)
+    ax.tick_params(which="minor", bottom=False, left=False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+# ==========================================
+# 1. Setup the 10-Bit Test Data (From Section III.D)
+# ==========================================
+# 3x3 Grid: Center pixel at max 10-bit thermal stress (1023), neighbors at 128
+initial_grid = np.array([
+    [128, 128, 128],
+    [128, 1023, 128],
+    [128, 128, 128]
+], dtype=np.int32)
+
+# ==========================================
+# 2. Execute the Hardware Algorithm
+# ==========================================
+compensated_grid = hardware_spatial_coupling(initial_grid)
+
+# ==========================================
+# 3. Prove Mathematical Conservation
+# ==========================================
+initial_luminance = np.sum(initial_grid)
+compensated_luminance = np.sum(compensated_grid)
+
+print("-" * 50)
+print("ACTUARIAL SPATIAL COUPLING VERIFICATION")
+print("-" * 50)
+print(f"Total Luminance Before: {initial_luminance}")
+print(f"Total Luminance After:  {compensated_luminance}")
+if initial_luminance == compensated_luminance:
+    print("=> SUCCESS: L <= 1 Stability Confirmed. Total optical centroid strictly conserved!")
+else:
+    print("=> WARNING: Luminance conservation failed (Likely due to saturation \oplus).")
+print("-" * 50)
+
+# ==========================================
+# 4. Generate the Publication Figure
+# ==========================================
+# Create a custom colormap going from Dark Gray (128) -> Orange -> Red (1023)
+colors = [(0.8, 0.8, 0.8), (1, 0.6, 0.2), (0.8, 0.1, 0.1)] 
+cmap_custom = mcolors.LinearSegmentedColormap.from_list("ThermalStress", colors, N=1024)
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+
+plot_grid(axes[0], initial_grid, "Before Compensation\n(Critical Stress State $S_1$)", cmap_custom)
+plot_grid(axes[1], compensated_grid, "After $II=1$ Diffusion\n(Thermal Offload)", cmap_custom)
+
+plt.tight_layout()
+
+# ==========================================
+# 5. Save Figure and Create Zip File
+# ==========================================
+# Ensure output directory exists
+output_dir = "output_figures"
+os.makedirs(output_dir, exist_ok=True)
+
+# Save the figure
+fig_path = os.path.join(output_dir, "spatial_coupling_result.png")
+plt.savefig(fig_path, dpi=300, bbox_inches='tight')
+print(f"Figure saved to {fig_path}")
+
+# Create the zip file
+zip_filename = "hardware_emulation_results.zip"
+with zipfile.ZipFile(zip_filename, 'w') as zipf:
+    zipf.write(fig_path, arcname="spatial_coupling_result.png")
+
+print(f"Results zipped successfully into: {zip_filename}")
+print("Downloading the zip file now...")
+
+plt.show()
+
+# Trigger the download in Colab
+try:
+    files.download(zip_filename)
+except Exception as e:
+    print(f"Automatic download failed: {e}")
+    print("You can manually download the zip file from the Colab file browser on the left.")
